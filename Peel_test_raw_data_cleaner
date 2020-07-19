@@ -1,0 +1,143 @@
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from statistics import mode
+import os.path
+from os.path import *
+from os import listdir
+import G44_modules as G44
+from tkinter import *
+from tkinter import filedialog
+
+# Window selection of the main directory
+root = Tk()
+root.withdraw()
+folder_selected = filedialog.askdirectory()
+dir_path = fr'{folder_selected}'
+folder_name = os.path.basename(os.path.dirname(dir_path))
+print("The source folder selected is " + dir_path)
+
+directory = filedialog.askdirectory()
+
+# Find all the folders with raw peel data and create a list of the paths
+raw_data_folders = []
+for root, dirs, files in os.walk(dir_path):
+    for raw_folder in dirs:
+        if raw_folder.endswith(".is_ptf_RawData"):
+            raw_data_folders.append(os.path.abspath(os.path.join(root, raw_folder)))
+
+
+# Create a list of all the .csv files in the raw data folders we have found before
+my_list = []
+for raw_folder in raw_data_folders:
+    my_list = [f for f in listdir(raw_folder) if isfile(join(raw_folder, f))]
+
+    if len(my_list) > 12:
+        print('ERROR: too many .csv files. MAX 12 files')
+
+    # Sort the file names using the digits in their name
+    csv_list = sorted(my_list, key=G44.natural_key)
+    print("The raw data selected are:")
+
+    for i in csv_list:
+        print(i)
+
+    data_frames = []
+    figures = []
+    fig_name = 0
+
+    # Do the math computations we need
+    for i in csv_list:
+        df = pd.read_csv(f'{raw_folder}/{i}')
+        df.drop(df.index[0], inplace=True)
+        df['PIP Count'] = df['PIP Count'].astype(float)
+        df['Load/width'] = df['Load/width'].astype(float)
+        df['Time'] = df['Time'].astype(float)
+        df['Extension'] = df['Extension'].astype(float)
+        df['Marked Data'] = df['Marked Data'].astype(float)
+        fltr = (df['PIP Count'].isin(range(1, 6)))
+        df = df.loc[fltr]
+        time = df.iloc[0:, 0].values
+        load = df.iloc[0:, 2].values
+        pip = df.iloc[0:, 4].values
+
+        section_1 = []
+        section_2 = []
+        section_3 = []
+        section_4 = []
+        section_5 = []
+
+        section_1.append(df.loc[df['PIP Count'] == 1, 'Load/width'].tolist())
+        section_2.append(df.loc[df['PIP Count'] == 2, 'Load/width'].tolist())
+        section_3.append(df.loc[df['PIP Count'] == 3, 'Load/width'].tolist())
+        section_4.append(df.loc[df['PIP Count'] == 4, 'Load/width'].tolist())
+        section_5.append(df.loc[df['PIP Count'] == 5, 'Load/width'].tolist())
+
+        section_1 = [round(num, 2) for num in [sum(x) for x in zip(*section_1)]]
+        section_2 = [round(num, 2) for num in [sum(x) for x in zip(*section_2)]]
+        section_3 = [round(num, 2) for num in [sum(x) for x in zip(*section_3)]]
+        section_4 = [round(num, 2) for num in [sum(x) for x in zip(*section_4)]]
+        section_5 = [round(num, 2) for num in [sum(x) for x in zip(*section_5)]]
+
+        avg_1 = round(sum(section_1) / len(section_1), 2)
+        avg_2 = round(sum(section_2) / len(section_2), 2)
+        avg_3 = round(sum(section_3) / len(section_3), 2)
+        avg_4 = round(sum(section_4) / len(section_4), 2)
+        avg_5 = round(sum(section_5) / len(section_5), 2)
+
+        mode_1 = mode(section_1)
+        mode_2 = mode(section_2)
+        mode_3 = mode(section_3)
+        mode_4 = mode(section_4)
+        mode_5 = mode(section_5)
+
+        max_1 = max(section_1)
+        max_2 = max(section_2)
+        max_3 = max(section_3)
+        max_4 = max(section_4)
+        max_5 = max(section_5)
+
+        min_1 = min(section_1)
+        min_2 = min(section_2)
+        min_3 = min(section_3)
+        min_4 = min(section_4)
+        min_5 = min(section_5)
+
+        # Store the results in a list
+        data = [['1', avg_1, mode_1, max_1, min_1],
+                ['2', avg_2, mode_2, max_2, min_2],
+                ['3', avg_3, mode_3, max_3, min_3],
+                ['4', avg_4, mode_4, max_4, min_4],
+                ['5', avg_5, mode_5, max_5, min_5]]
+
+        # Create a pandas data frame with all the results in specified columns
+        df = pd.DataFrame(data, columns=['Section', 'Average [kgf/cm]', 'Mode [kgf/cm]', 'Max [kgf/cm]', 'Min [kgf/cm]'])
+        data_frames.append(df)
+
+        sample_type = ['MD1_dry', 'MD2_dry', 'MD3_dry', 'CD1_dry', 'CD2_dry', 'CD3_dry', 'MD1_wet', 'MD2_wet', 'MD3_wet', 'CD1_wet', 'CD2_wet', 'CD3_wet']
+
+    # Make a graph with 5 sections highlighted
+        fig = plt.figure(figsize=(13, 9))
+        mpl.rc('figure', max_open_warning=0)
+        ax1 = fig.add_subplot(111, label="1")
+        ax1.plot(time, load)
+        ax1.set_xlabel("Time [sec]")
+        ax2 = fig.add_subplot(111, label="2", frame_on=False)
+        ax2.plot(pip, load, '-r')
+        ax2.set_xlabel("PIP Count")
+        ax2.xaxis.tick_top()
+        ax2.xaxis.set_label_position('top')
+        plt.xticks([1, 2, 3, 4, 5, 6])
+        plt.ylabel('Load [kgf/cm]')
+        figures.append(fig)
+        plt.title(sample_type[fig_name], fontdict={'fontsize': 16})
+        fig_name += 1
+    
+    # Take the name of the new spreadsheet from the folder containing the raw data
+    name_spreadsheet = re.search(r'([^WO]WO[^WO]*).*?(WO[^WO]*)', raw_folder).group(2)
+    if name_spreadsheet.endswith('.is_ptf_RawData'):
+        name_spreadsheet = name_spreadsheet[:-15]
+
+    # Create a new excel spreadsheet containing the new dataframes for each peel type, for each SR
+    save_dir = fr'{directory}'
+    G44.write_dataframes_to_excel_sheet(data_frames, save_dir, name_spreadsheet, figures)
