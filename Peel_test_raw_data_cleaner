@@ -2,29 +2,78 @@ import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from statistics import mode
-import os.path
-from os.path import *
-from os import listdir
-import G44_modules as G44
+#import os.path
+from os.path import isfile, join, basename, dirname, abspath
+from os import listdir, walk
 from tkinter import *
 from tkinter import filedialog
+import re
+import io
+
+
+# Function to sort strings by digits inside the strings
+def natural_key(string_):
+    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
+    
+# Function to write the data frames and graphs in an Excel spreadsheet
+def write_dataframes_to_excel_sheet(data_frames, dir, name, figures):
+    with pd.ExcelWriter(f'{dir}/{name}.xlsx', engine='xlsxwriter') as writer:
+        workbook = writer.book
+        worksheet = workbook.add_worksheet('Peel results')
+        worksheet.set_column(2, 6, 23)
+        graphs_sheet = workbook.add_worksheet('Peel graphs')
+        writer.sheets['Peel results'] = worksheet
+
+        COLUMN = 1
+        row = 0
+        sample_type = ['MD1_dry', 'MD2_dry', 'MD3_dry', 'CD1_dry', 'CD2_dry', 'CD3_dry', 'MD1_wet', 'MD2_wet', 'MD3_wet', 'CD1_wet', 'CD2_wet', 'CD3_wet']
+
+        n = 0
+        for df in data_frames:
+            worksheet.write_string(row + 1, COLUMN -1, sample_type[n])
+            row += 1
+            df.to_excel(writer, sheet_name='Peel results', startrow=row, startcol=COLUMN, index=False)
+            row += df.shape[0]
+            n += 1
+
+        a = 2
+        b = 0
+        for fig in figures:
+            img_data = io.BytesIO()
+            fig.savefig(img_data, format='png')
+            graphs_sheet.insert_image(a, 2, sample_type[b], {'image_data': img_data})
+            a += 45
+            
+        
+        
+        workbook.close() 
+ 
+#Function to count the number of 10% drop in the load
+def drop_count(section_number):
+	drop_list = []
+	for value in section_number[1:]:
+		drop = round(((section_number[section_number.index(value)- 1] - value)/(section_number[section_number.index(value) - 1])), 2)
+		if drop >= 0.1:
+			drop_list.append(drop)
+	return len(drop_list)
+
 
 # Window selection of the main directory
 root = Tk()
 root.withdraw()
 folder_selected = filedialog.askdirectory()
 dir_path = fr'{folder_selected}'
-folder_name = os.path.basename(os.path.dirname(dir_path))
+folder_name = basename(dirname(dir_path))
 print("The source folder selected is " + dir_path)
 
 directory = filedialog.askdirectory()
 
-# Find all the folders with raw peel data and create a list of the paths
+# Find all the folders with raw G44 peel data and create a list of the paths
 raw_data_folders = []
-for root, dirs, files in os.walk(dir_path):
+for root, dirs, files in walk(dir_path):
     for raw_folder in dirs:
         if raw_folder.endswith(".is_ptf_RawData"):
-            raw_data_folders.append(os.path.abspath(os.path.join(root, raw_folder)))
+            raw_data_folders.append(abspath(join(root, raw_folder)))
 
 
 # Create a list of all the .csv files in the raw data folders we have found before
@@ -35,18 +84,23 @@ for raw_folder in raw_data_folders:
     if len(my_list) > 12:
         print('ERROR: too many .csv files. MAX 12 files')
 
+	# Take the name of the new spreadsheet from the folder containing the raw data
+    name_spreadsheet = re.search(r'([^WO]WO[^WO]*).*?(WO[^WO]*)', raw_folder).group(2)
+    if name_spreadsheet.endswith('.is_ptf_RawData'):
+        name_spreadsheet = name_spreadsheet[:-15]
+
     # Sort the file names using the digits in their name
-    csv_list = sorted(my_list, key=G44.natural_key)
+    csv_list = sorted(my_list, key=natural_key)
     print("The raw data selected are:")
 
     for i in csv_list:
-        print(i)
+        print(name_spreadsheet + i)
 
     data_frames = []
     figures = []
     fig_name = 0
 
-    # Do the math computations we need
+    # Do the computations we need (average, mode, max, min, count 10% drops) for each section
     for i in csv_list:
         df = pd.read_csv(f'{raw_folder}/{i}')
         df.drop(df.index[0], inplace=True)
@@ -102,18 +156,23 @@ for raw_folder in raw_data_folders:
         min_3 = min(section_3)
         min_4 = min(section_4)
         min_5 = min(section_5)
+        
+        drop_1 = drop_count(section_1)
+        drop_2 = drop_count(section_2)
+        drop_3 = drop_count(section_3)
+        drop_4 = drop_count(section_4)
+        drop_5 = drop_count(section_5)
 
         # Store the results in a list
-        data = [['1', avg_1, mode_1, max_1, min_1],
-                ['2', avg_2, mode_2, max_2, min_2],
-                ['3', avg_3, mode_3, max_3, min_3],
-                ['4', avg_4, mode_4, max_4, min_4],
-                ['5', avg_5, mode_5, max_5, min_5]]
+        data = [['1', avg_1, mode_1, max_1, min_1, drop_1],
+                ['2', avg_2, mode_2, max_2, min_2, drop_2],
+                ['3', avg_3, mode_3, max_3, min_3, drop_3],
+                ['4', avg_4, mode_4, max_4, min_4, drop_4],
+                ['5', avg_5, mode_5, max_5, min_5, drop_5]]
 
         # Create a pandas data frame with all the results in specified columns
-        df = pd.DataFrame(data, columns=['Section', 'Average [kgf/cm]', 'Mode [kgf/cm]', 'Max [kgf/cm]', 'Min [kgf/cm]'])
+        df = pd.DataFrame(data, columns=['Section', 'Average [kgf/cm]', 'Mode [kgf/cm]', 'Max [kgf/cm]', 'Min [kgf/cm]', 'Number of drops (>=10%)'])
         data_frames.append(df)
-
         sample_type = ['MD1_dry', 'MD2_dry', 'MD3_dry', 'CD1_dry', 'CD2_dry', 'CD3_dry', 'MD1_wet', 'MD2_wet', 'MD3_wet', 'CD1_wet', 'CD2_wet', 'CD3_wet']
 
     # Make a graph with 5 sections highlighted
@@ -132,12 +191,8 @@ for raw_folder in raw_data_folders:
         figures.append(fig)
         plt.title(sample_type[fig_name], fontdict={'fontsize': 16})
         fig_name += 1
-    
-    # Take the name of the new spreadsheet from the folder containing the raw data
-    name_spreadsheet = re.search(r'([^WO]WO[^WO]*).*?(WO[^WO]*)', raw_folder).group(2)
-    if name_spreadsheet.endswith('.is_ptf_RawData'):
-        name_spreadsheet = name_spreadsheet[:-15]
 
     # Create a new excel spreadsheet containing the new dataframes for each peel type, for each SR
     save_dir = fr'{directory}'
-    G44.write_dataframes_to_excel_sheet(data_frames, save_dir, name_spreadsheet, figures)
+    write_dataframes_to_excel_sheet(data_frames, save_dir, name_spreadsheet, figures)
+
