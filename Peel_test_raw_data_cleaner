@@ -1,61 +1,94 @@
 import pandas as pd
+import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from statistics import mode
-#import os.path
 from os.path import isfile, join, basename, dirname, abspath
 from os import listdir, walk
 from tkinter import *
 from tkinter import filedialog
 import re
 import io
+import statistics
+from collections import Counter
+import seaborn as sns
+from xlrd import open_workbook
+import xlsxwriter
+
+
+#Function to calculate the mode. If multiple mode occure select the smaller number
+def find_min_mode(list1):
+	c = Counter(list1)
+	max_number_count = c.most_common(1)[0][1]
+	modes = (item for item, count in c.items() if count == max_number_count) 
+	min_mode = min(modes)
+	return min_mode
 
 
 # Function to sort strings by digits inside the strings
 def natural_key(string_):
-    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
-    
-# Function to write the data frames and graphs in an Excel spreadsheet
-def write_dataframes_to_excel_sheet(data_frames, dir, name, figures):
-    with pd.ExcelWriter(f'{dir}/{name}.xlsx', engine='xlsxwriter') as writer:
-        workbook = writer.book
-        worksheet = workbook.add_worksheet('Peel results')
-        worksheet.set_column(2, 6, 23)
-        graphs_sheet = workbook.add_worksheet('Peel graphs')
-        writer.sheets['Peel results'] = worksheet
+	return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
 
-        COLUMN = 1
-        row = 0
-        sample_type = ['MD1_dry', 'MD2_dry', 'MD3_dry', 'CD1_dry', 'CD2_dry', 'CD3_dry', 'MD1_wet', 'MD2_wet', 'MD3_wet', 'CD1_wet', 'CD2_wet', 'CD3_wet']
-
-        n = 0
-        for df in data_frames:
-            worksheet.write_string(row + 1, COLUMN -1, sample_type[n])
-            row += 1
-            df.to_excel(writer, sheet_name='Peel results', startrow=row, startcol=COLUMN, index=False)
-            row += df.shape[0]
-            n += 1
-
-        a = 2
-        b = 0
-        for fig in figures:
-            img_data = io.BytesIO()
-            fig.savefig(img_data, format='png')
-            graphs_sheet.insert_image(a, 2, sample_type[b], {'image_data': img_data})
-            a += 45
-            
-        
-        
-        workbook.close() 
- 
 #Function to count the number of 10% drop in the load
 def drop_count(section_number):
 	drop_list = []
 	for value in section_number[1:]:
-		drop = round(((section_number[section_number.index(value)- 1] - value)/(section_number[section_number.index(value) - 1])), 2)
+		print(section_number[section_number.index(value)])
+		drop = ((abs(section_number[section_number.index(value)- 1]) - abs(value))/abs((section_number[section_number.index(value) - 1])))
 		if drop >= 0.1:
 			drop_list.append(drop)
 	return len(drop_list)
+
+
+# Function to give chunks of a list with size= 12 elements
+def chunks(l, n): return [l[x: x+n] for x in range(0, len(l), n)]
+
+
+# Function to write the data frames and graphs in an Excel spreadsheet
+def write_dataframes_to_excel_sheet(data_frames, averages, df_raw_data, directory, name, figures):
+	with pd.ExcelWriter(f'{directory}/{name}.xlsx', engine='xlsxwriter') as writer:
+		workbook = writer.book
+		worksheet_1 = workbook.add_worksheet('Peel results')
+		worksheet_1.set_column(2, 6, 23)
+		worksheet_2 = workbook.add_worksheet('Averages')
+		worksheet_2.set_column(1, 5, 16)
+		worksheet_3 = workbook.add_worksheet('Raw data')
+		graphs_sheet = workbook.add_worksheet('Peel graphs')
+		writer.sheets['Peel results'] = worksheet_1
+		writer.sheets['Averages'] = worksheet_2
+		writer.sheets['Raw data'] = worksheet_3
+
+		COLUMN = 1
+		row = 0
+		sample_type = ['MD1_dry', 'MD2_dry', 'MD3_dry', 'CD1_dry', 'CD2_dry', 'CD3_dry', 'MD1_wet', 'MD2_wet', 'MD3_wet', 'CD1_wet', 'CD2_wet', 'CD3_wet']
+		n = 0
+		
+		for df in data_frames:
+			worksheet_1.write_string(row + 1, COLUMN -1, sample_type[n])
+			row += 1
+			df.to_excel(writer, sheet_name='Peel results', startrow=row-1, startcol=COLUMN, index=False)
+			row += df.shape[0]+ 2
+			n += 1
+
+		COLUMN = 1
+		row = 0
+		n = 0
+		for i in range(0,12):
+			worksheet_2.write_string(row + 1, COLUMN -1, sample_type[n])
+			avg_df.to_excel(writer, sheet_name='Averages', startrow=-1, startcol=1, index=False)
+			row += 1
+			n += 1
+		df_raw_data.to_excel(writer, sheet_name='Raw data', startrow=0, startcol=0, index=False)
+
+		a = 2
+		b = 0
+		for fig in figures:
+			img_data = io.BytesIO()
+			fig.savefig(img_data, format='png')
+			graphs_sheet.insert_image(a, 2, sample_type[b], {'image_data': img_data})
+			a += 45
+
+		workbook.close() 
 
 
 # Window selection of the main directory
@@ -65,134 +98,340 @@ folder_selected = filedialog.askdirectory()
 dir_path = fr'{folder_selected}'
 folder_name = basename(dirname(dir_path))
 print("The source folder selected is " + dir_path)
-
 directory = filedialog.askdirectory()
+print("The data will be saved in " + fr'{directory}')
+
 
 # Find all the folders with raw G44 peel data and create a list of the paths
 raw_data_folders = []
+categorical_features = []
 for root, dirs, files in walk(dir_path):
-    for raw_folder in dirs:
-        if raw_folder.endswith(".is_ptf_RawData"):
-            raw_data_folders.append(abspath(join(root, raw_folder)))
+	for raw_folder in dirs:
+		if raw_folder.endswith(".is_ptf_RawData"):
+			raw_data_folders.append(abspath(join(root, raw_folder)))
+raw_data_folders = sorted(raw_data_folders, key=natural_key)
 
 
 # Create a list of all the .csv files in the raw data folders we have found before
 my_list = []
+MD_dry_list = []
+CD_dry_list = []
+MD_wet_list = []
+CD_wet_list = []
+name_spreadsheet_list = []
+
 for raw_folder in raw_data_folders:
-    my_list = [f for f in listdir(raw_folder) if isfile(join(raw_folder, f))]
+	my_list = [f for f in listdir(raw_folder) if isfile(join(raw_folder, f))]
+	csv_files_list = []
+	
+	if (len(my_list) % 2 == 0):
+		my_list = sorted(my_list, key=natural_key)
+		for i in chunks(my_list, 12):
+			csv_files_list.append(i)
+	
+		counter = 0
+		for csv_list in csv_files_list:
+			
+			raw_data_frames = {}
+			
+			# Sort the file names using the digits in their name
+			csv_list = sorted(csv_list, key=natural_key)
+			print("The raw data selected are:")
 
-    if len(my_list) > 12:
-        print('ERROR: too many .csv files. MAX 12 files')
+			# Take the name of the new spreadsheet from the folder containing the raw data
+			if re.search(r'([^WO]WO[^WO]*).*?(WO[^WO]*)', raw_folder):
+				name_spreadsheet = re.search(r'([^WO]WO[^WO]*).*?(WO[^WO]*)', raw_folder).group(2)
+				if name_spreadsheet.endswith('.is_ptf_RawData'):
+					name_spreadsheet = name_spreadsheet[:-15]
+					name_spreadsheet = name_spreadsheet + f'_{counter}'
+					name_spreadsheet_list.append(name_spreadsheet)
+					counter += 1
+			elif re.search(r'(TT\d{4}...).*?(TT\d{4}....)', raw_folder):
+				name_spreadsheet = re.search(r'(TT\d{4}...).*?(TT\d{4}.{9})', raw_folder).group(2)
+				print(name_spreadsheet)
+				if name_spreadsheet.endswith('.is_ptf_RawData'):
+					name_spreadsheet = name_spreadsheet[:-15]
+					name_spreadsheet_list.append(name_spreadsheet)
+				else:
+					name_spreadsheet_list.append(name_spreadsheet)
+			else:
+				print('ERROR no WO or TT folders found!')
+				quit()
+				
+			for i in csv_list:
+				print(name_spreadsheet + ' ' + i)
 
-	# Take the name of the new spreadsheet from the folder containing the raw data
-    name_spreadsheet = re.search(r'([^WO]WO[^WO]*).*?(WO[^WO]*)', raw_folder).group(2)
-    if name_spreadsheet.endswith('.is_ptf_RawData'):
-        name_spreadsheet = name_spreadsheet[:-15]
+			data_frames = []
+			figures = []
+			averages = [['average averages', 'average mode', 'average max', 'average min', 'average drop']]
+			fig_name = 0
+			dfs_MD_dry = []
+			dfs_CD_dry = []
+			dfs_MD_wet = []
+			dfs_CD_wet = []
 
-    # Sort the file names using the digits in their name
-    csv_list = sorted(my_list, key=natural_key)
-    print("The raw data selected are:")
+			# Do the computations we need (average, mode, max, min, count 10% drops) for each .csv file
+			for i in csv_list:
+				print(i)
+				df = pd.read_csv(f'{raw_folder}/{i}')
+				df.drop(df.index[0], inplace=True)
+				df['PIP Count'] = df['PIP Count'].astype(float)
+				df['Load/width'] = df['Load/width'].astype(float)
+				df['Time'] = df['Time'].astype(float)
+				df['Extension'] = df['Extension'].astype(float)
+				df['Marked Data'] = df['Marked Data'].astype(float)
+				df[df['Marked Data'] != 1]
+				fltr = (df['PIP Count'].isin(range(1, 6)))
+				df = df.loc[fltr]
+				time = df.iloc[0:, 0].values
+				load = df.iloc[0:, 2].values
+				pip = df.iloc[0:, 4].values
+				
 
-    for i in csv_list:
-        print(name_spreadsheet + i)
+				section_1 = []
+				section_2 = []
+				section_3 = []
+				section_4 = []
+				section_5 = []
 
-    data_frames = []
-    figures = []
-    fig_name = 0
+				section_1.append(df.loc[df['PIP Count'] == 1, 'Load/width'].tolist())
+				section_2.append(df.loc[df['PIP Count'] == 2, 'Load/width'].tolist())
+				section_3.append(df.loc[df['PIP Count'] == 3, 'Load/width'].tolist())
+				section_4.append(df.loc[df['PIP Count'] == 4, 'Load/width'].tolist())
+				section_5.append(df.loc[df['PIP Count'] == 5, 'Load/width'].tolist())
 
-    # Do the computations we need (average, mode, max, min, count 10% drops) for each section
-    for i in csv_list:
-        df = pd.read_csv(f'{raw_folder}/{i}')
-        df.drop(df.index[0], inplace=True)
-        df['PIP Count'] = df['PIP Count'].astype(float)
-        df['Load/width'] = df['Load/width'].astype(float)
-        df['Time'] = df['Time'].astype(float)
-        df['Extension'] = df['Extension'].astype(float)
-        df['Marked Data'] = df['Marked Data'].astype(float)
-        fltr = (df['PIP Count'].isin(range(1, 6)))
-        df = df.loc[fltr]
-        time = df.iloc[0:, 0].values
-        load = df.iloc[0:, 2].values
-        pip = df.iloc[0:, 4].values
+				section_1 = [num for num in [sum(x) for x in zip(*section_1)]]
+				section_2 = [num for num in [sum(x) for x in zip(*section_2)]]
+				section_3 = [num for num in [sum(x) for x in zip(*section_3)]]
+				section_4 = [num for num in [sum(x) for x in zip(*section_4)]]
+				section_5 = [num for num in [sum(x) for x in zip(*section_5)]]
 
-        section_1 = []
-        section_2 = []
-        section_3 = []
-        section_4 = []
-        section_5 = []
+				avg_1 = round(sum(section_1) / len(section_1), 2)
+				avg_2 = round(sum(section_2) / len(section_2), 2)
+				avg_3 = round(sum(section_3) / len(section_3), 2)
+				avg_4 = round(sum(section_4) / len(section_4), 2)
+				avg_5 = round(sum(section_5) / len(section_5), 2)
+				avg_avg_list = [avg_1, avg_2, avg_3, avg_4, avg_5]
+				avg_avg = round((sum(avg_avg_list)/5), 2)
 
-        section_1.append(df.loc[df['PIP Count'] == 1, 'Load/width'].tolist())
-        section_2.append(df.loc[df['PIP Count'] == 2, 'Load/width'].tolist())
-        section_3.append(df.loc[df['PIP Count'] == 3, 'Load/width'].tolist())
-        section_4.append(df.loc[df['PIP Count'] == 4, 'Load/width'].tolist())
-        section_5.append(df.loc[df['PIP Count'] == 5, 'Load/width'].tolist())
+				mode_1 = round(find_min_mode(section_1), 2)
+				mode_2 = round(find_min_mode(section_2), 2)
+				mode_3 = round(find_min_mode(section_3), 2)
+				mode_4 = round(find_min_mode(section_4), 2)
+				mode_5 = round(find_min_mode(section_5), 2)
+				avg_mode_list = [mode_1, mode_2, mode_3, mode_4, mode_5]
+				avg_mode = round(sum(avg_mode_list)/5, 2)
 
-        section_1 = [round(num, 2) for num in [sum(x) for x in zip(*section_1)]]
-        section_2 = [round(num, 2) for num in [sum(x) for x in zip(*section_2)]]
-        section_3 = [round(num, 2) for num in [sum(x) for x in zip(*section_3)]]
-        section_4 = [round(num, 2) for num in [sum(x) for x in zip(*section_4)]]
-        section_5 = [round(num, 2) for num in [sum(x) for x in zip(*section_5)]]
+				max_1 = round(max(section_1), 2)
+				max_2 = round(max(section_2), 2)
+				max_3 = round(max(section_3), 2)
+				max_4 = round(max(section_4), 2)
+				max_5 = round(max(section_5), 2)
+				avg_max_list = [max_1, max_2, max_3, max_4, max_5]
+				avg_max = round(sum(avg_max_list)/5, 2)
 
-        avg_1 = round(sum(section_1) / len(section_1), 2)
-        avg_2 = round(sum(section_2) / len(section_2), 2)
-        avg_3 = round(sum(section_3) / len(section_3), 2)
-        avg_4 = round(sum(section_4) / len(section_4), 2)
-        avg_5 = round(sum(section_5) / len(section_5), 2)
+				min_1 = round(min(section_1), 2)
+				min_2 = round(min(section_2), 2)
+				min_3 = round(min(section_3), 2)
+				min_4 = round(min(section_4), 2)
+				min_5 = round(min(section_5), 2)
+				avg_min_list = [min_1, min_2, min_3, min_4, min_5]
+				avg_min = round(sum(avg_min_list)/5, 2)
+				
+				drop_1 = drop_count(section_1)
+				drop_2 = drop_count(section_2)
+				drop_3 = drop_count(section_3)
+				drop_4 = drop_count(section_4)
+				drop_5 = drop_count(section_5)
+				avg_drop_list = [drop_1, drop_2, drop_3, drop_4, drop_5]
+				avg_drop = round(sum(avg_drop_list)/5, 2)
+				
+				avg_avg_list = [avg_avg, avg_mode, avg_max, avg_min, avg_drop]
+				averages.append(avg_avg_list)
+				
+				#Store MD_1, MD_2, MD_3 dry raw data in a list
+				if (i in csv_list[0:3]) or (i in csv_list[12:15]) or (i in csv_list[24:27]):
+					load_MD_dry_dict = {'MD_dry_raw': load}
+					df_MD_dry_load = pd.DataFrame(load_MD_dry_dict)
+					dfs_MD_dry.append(df_MD_dry_load)
+				
+				
+				#Store CD_1, CD_2, CD_3 dry raw data in a list
+				elif (i in csv_list[3:6]) or (i in csv_list[15:18]) or (i in csv_list[27:30]):
+					load_CD_dry_dict = {'CD_dry_raw': load}
+					df_CD_dry_load = pd.DataFrame(load_CD_dry_dict)
+					dfs_CD_dry.append(df_CD_dry_load)
+					
+				#Store MD_1, MD_2, MD_3 wet raw data in a list
+				elif (i in csv_list[6:9]) or (i in csv_list[18:21]) or (i in csv_list[30:33]):
+					load_MD_wet_dict = {'MD_wet_raw': load}
+					df_MD_wet_load = pd.DataFrame(load_MD_wet_dict)
+					dfs_MD_wet.append(df_MD_wet_load)
+				
+				
+				#Store CD_1, CD_2, CD_3 wet raw data in a list
+				elif (i in csv_list[9:12]) or (i in csv_list[21:24])or (i in csv_list[33:36]):
+					load_CD_wet_dict = {'CD_wet_raw': load}
+					df_CD_wet_load = pd.DataFrame(load_CD_wet_dict)
+					dfs_CD_wet.append(df_CD_wet_load)
+				
+				
+				# Store the results in a list
+				data = [['1', avg_1, mode_1, max_1, min_1, drop_1],
+						['2', avg_2, mode_2, max_2, min_2, drop_2],
+						['3', avg_3, mode_3, max_3, min_3, drop_3],
+						['4', avg_4, mode_4, max_4, min_4, drop_4],
+						['5', avg_5, mode_5, max_5, min_5, drop_5],
+						['Averages', avg_avg, avg_mode, avg_max, avg_min, avg_drop]]
 
-        mode_1 = mode(section_1)
-        mode_2 = mode(section_2)
-        mode_3 = mode(section_3)
-        mode_4 = mode(section_4)
-        mode_5 = mode(section_5)
+				# Create a pandas data frame with all the results in specified columns
+				df = pd.DataFrame(data, columns=['Section', 'Average [kgf/cm]', 'Mode [kgf/cm]', 'Max [kgf/cm]', 'Min [kgf/cm]', 'Number of drops (>=10%)'])
+				data_frames.append(df)
+				sample_type = ['MD1_dry', 'MD2_dry', 'MD3_dry', 'CD1_dry', 'CD2_dry', 'CD3_dry', 'MD1_wet', 'MD2_wet', 'MD3_wet', 'CD1_wet', 'CD2_wet', 'CD3_wet']
+				
+				# Make a graph with 5 sections highlighted
+				if (i in csv_list[0:3]) or (i in csv_list[12:15]) or (i in csv_list[24:27]) or (i in csv_list[3:6]) or (i in csv_list[15:18]) or (i in csv_list[27:30]):
+					fig = plt.figure(figsize=(13, 9))
+					mpl.rc('figure', max_open_warning=0)
+					ax1 = fig.add_subplot(111, label="1")
+					ax1.plot(time, load)
+					ax1.set_xlabel("Time [sec]")
+					ax1.axhline(y=2.5)
+					ax2 = fig.add_subplot(111, label="2", frame_on=False)
+					ax2.plot(pip, load, '-r')
+					ax2.set_xlabel("PIP Count")
+					ax2.xaxis.tick_top()
+					ax2.xaxis.set_label_position('top')
+					plt.xticks([1, 2, 3, 4, 5, 6])
+					plt.ylabel('Load [kgf/cm]')
+					figures.append(fig)
+					plt.title(sample_type[fig_name], fontdict={'fontsize': 16})
+					fig_name += 1
+					plt.close()
+				
+				elif (i in csv_list[6:9]) or (i in csv_list[18:21]) or (i in csv_list[30:33]) or (i in csv_list[9:12]) or (i in csv_list[21:24])or (i in csv_list[33:36]):
+					fig = plt.figure(figsize=(13, 9))
+					mpl.rc('figure', max_open_warning=0)
+					ax1 = fig.add_subplot(111, label="1")
+					ax1.plot(time, load)
+					ax1.set_xlabel("Time [sec]")
+					ax1.axhline(y=2.0)
+					ax2 = fig.add_subplot(111, label="2", frame_on=False)
+					ax2.plot(pip, load, '-r')
+					ax2.set_xlabel("PIP Count")
+					ax2.xaxis.tick_top()
+					ax2.xaxis.set_label_position('top')
+					plt.xticks([1, 2, 3, 4, 5, 6])
+					plt.ylabel('Load [kgf/cm]')
+					figures.append(fig)
+					plt.title(sample_type[fig_name], fontdict={'fontsize': 16})
+					fig_name += 1
+					plt.close()
+			
+			
+			# Create a new dataframe with only averages
+			avg_df = pd.DataFrame(averages)
+			dry_avg = round((sum(avg_df.iloc[1:7, 0].values)/6), 2)
+			wet_avg = round((sum(avg_df.iloc[7:13, 0].values)/6), 2)
+			
+			
+			#Create dataframe with Load raw data
+			df_MD_dry = pd.concat(dfs_MD_dry, ignore_index=True)
+			MD_dry_list.append(df_MD_dry.to_numpy())
+			
+			df_CD_dry = pd.concat(dfs_CD_dry, ignore_index=True)
+			CD_dry_list.append(df_CD_dry.to_numpy())
+			
+			df_MD_wet = pd.concat(dfs_MD_wet, ignore_index=True)
+			MD_wet_list.append(df_MD_wet.to_numpy())
+			
+			df_CD_wet = pd.concat(dfs_CD_wet, ignore_index=True)
+			CD_wet_list.append(df_CD_wet.to_numpy())
+			
+			raw_data_list = [df_MD_dry, df_CD_dry, df_MD_wet, df_CD_wet]
+			df_raw_data = pd.concat(raw_data_list, axis=1)
+			 
 
-        max_1 = max(section_1)
-        max_2 = max(section_2)
-        max_3 = max(section_3)
-        max_4 = max(section_4)
-        max_5 = max(section_5)
+			# Create a new excel spreadsheet containing the new dataframes for each peel type, for each SR
+			save_dir = fr'{directory}'
+			write_dataframes_to_excel_sheet(data_frames, averages, df_raw_data, save_dir, name_spreadsheet, figures)
+			
+	else:
+		print(f'ERROR: The number of .csv files in the folder {raw_folder} is not a multiple of 12')
+		quit()
 
-        min_1 = min(section_1)
-        min_2 = min(section_2)
-        min_3 = min(section_3)
-        min_4 = min(section_4)
-        min_5 = min(section_5)
-        
-        drop_1 = drop_count(section_1)
-        drop_2 = drop_count(section_2)
-        drop_3 = drop_count(section_3)
-        drop_4 = drop_count(section_4)
-        drop_5 = drop_count(section_5)
 
-        # Store the results in a list
-        data = [['1', avg_1, mode_1, max_1, min_1, drop_1],
-                ['2', avg_2, mode_2, max_2, min_2, drop_2],
-                ['3', avg_3, mode_3, max_3, min_3, drop_3],
-                ['4', avg_4, mode_4, max_4, min_4, drop_4],
-                ['5', avg_5, mode_5, max_5, min_5, drop_5]]
+names_boxplot = []
+for x in name_spreadsheet_list:
+	if re.search(r'([^WO]WO[^WO]*).*?(WO[^WO]*)', x) != None:
+		names_boxplot.append(x[18:29])
+	else:
+		names_boxplot.append(x)
+	
 
-        # Create a pandas data frame with all the results in specified columns
-        df = pd.DataFrame(data, columns=['Section', 'Average [kgf/cm]', 'Mode [kgf/cm]', 'Max [kgf/cm]', 'Min [kgf/cm]', 'Number of drops (>=10%)'])
-        data_frames.append(df)
-        sample_type = ['MD1_dry', 'MD2_dry', 'MD3_dry', 'CD1_dry', 'CD2_dry', 'CD3_dry', 'MD1_wet', 'MD2_wet', 'MD3_wet', 'CD1_wet', 'CD2_wet', 'CD3_wet']
+# Create box plot graph of all the raw data found by the program
+boxplot_name = re.search(r'(TT\d{4})', fr'{folder_selected}').group(1)
+workbook = xlsxwriter.Workbook(f'{directory}/{boxplot_name} Peel raw data box-plots.xlsx')
 
-    # Make a graph with 5 sections highlighted
-        fig = plt.figure(figsize=(13, 9))
-        mpl.rc('figure', max_open_warning=0)
-        ax1 = fig.add_subplot(111, label="1")
-        ax1.plot(time, load)
-        ax1.set_xlabel("Time [sec]")
-        ax2 = fig.add_subplot(111, label="2", frame_on=False)
-        ax2.plot(pip, load, '-r')
-        ax2.set_xlabel("PIP Count")
-        ax2.xaxis.tick_top()
-        ax2.xaxis.set_label_position('top')
-        plt.xticks([1, 2, 3, 4, 5, 6])
-        plt.ylabel('Load [kgf/cm]')
-        figures.append(fig)
-        plt.title(sample_type[fig_name], fontdict={'fontsize': 16})
-        fig_name += 1
+font = {'weight': 'bold', 'size': 22}
 
-    # Create a new excel spreadsheet containing the new dataframes for each peel type, for each SR
-    save_dir = fr'{directory}'
-    write_dataframes_to_excel_sheet(data_frames, save_dir, name_spreadsheet, figures)
+mpl.rc('font', **font)
 
+for TT, d_frame in raw_data_frames.item():
+	worksheet = workbook.add_worksheet(f'{TT} raw_data')
+	writer = pd.ExcelWriter('Peel raw data box-plots.xlsx', engine='xlsxwriter')
+	d_frame.to_excel(writer, sheet_name=f'{TT} raw_data', startrow=0, startcol=0, index=True)
+
+
+fig = plt.figure(figsize=[13,12])
+ax = fig.add_subplot(111)
+fig.suptitle(f'{boxplot_name} - MD dry Load raw data')
+sns.boxplot(data=MD_dry_list)
+ax.set_xticklabels(names_boxplot, rotation=45, fontsize=10)
+ax.set_title('MD_dry')
+ax.set_ylabel('kgf/cm')
+ax.axhline(y=2.5)
+plt.savefig('MD_dry.png')
+worksheet = workbook.add_worksheet('MD_dry')
+worksheet.insert_image('B2', 'MD_dry.png')
+
+
+fig = plt.figure(figsize=[13,12])
+ax = fig.add_subplot(111)
+fig.suptitle(f'{boxplot_name} - CD dry Load raw data')
+sns.boxplot(data=CD_dry_list)
+ax.set_xticklabels(names_boxplot, rotation=45, fontsize=10)
+ax.set_title('CD_dry')
+ax.set_ylabel('kgf/cm')
+ax.axhline(y=2.5)
+plt.savefig('CD_dry.png')
+worksheet = workbook.add_worksheet('CD_dry')
+worksheet.insert_image('B2', 'CD_dry.png')
+
+
+fig = plt.figure(figsize=[13,12])
+ax = fig.add_subplot(111)
+fig.suptitle(f'{boxplot_name} - MD wet Load raw data')
+sns.boxplot(data=MD_wet_list)
+ax.set_xticklabels(names_boxplot, rotation=45, fontsize=10)
+ax.set_title('MD_wet')
+ax.set_ylabel('kgf/cm')
+ax.axhline(y=2.0)
+plt.savefig('MD_wet.png')
+worksheet = workbook.add_worksheet('MD_wet')
+worksheet.insert_image('B2', 'MD_wet.png')
+
+
+fig = plt.figure(figsize=[13,12])
+ax = fig.add_subplot(111)
+fig.suptitle(f'{boxplot_name} - CD wet Load raw data')
+sns.boxplot(data=CD_wet_list)
+ax.set_xticklabels(names_boxplot, rotation=45, fontsize=10)
+ax.set_title('CD_wet')
+ax.set_ylabel('kgf/cm')
+ax.axhline(y=2.0)
+plt.savefig('CD_wet.png')
+worksheet = workbook.add_worksheet('CD_wet')
+worksheet.insert_image('B2', 'CD_wet.png')
+
+workbook.close()
